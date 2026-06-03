@@ -1247,7 +1247,7 @@ function fmt(type) {
   const mdBody = preview.querySelector('.md-body');
   const winSel = window.getSelection();
   const inPreview = mdBody && activePane === 'preview' && (mdBody.contains(document.activeElement) || (winSel && winSel.anchorNode && mdBody.contains(winSel.anchorNode)));
-  if (inPreview && (type === 'ul' || type === 'ol' || type === 'task' || type === 'quote')) {
+  if (inPreview && (type === 'ul' || type === 'ol' || type === 'task' || type === 'quote' || type === 'codeblock' || type === 'hr' || type === 'h1' || type === 'h2' || type === 'h3')) {
     let node = winSel.anchorNode;
     while (node && node !== mdBody) {
       if (node.nodeType === 1 && node.hasAttribute('data-source-line')) {
@@ -1268,25 +1268,6 @@ function fmt(type) {
       syncPreviewToEditor();
       return;
     }
-    const blockCmd = {
-      h1: ['formatBlock', '<h1>'], h2: ['formatBlock', '<h2>'], h3: ['formatBlock', '<h3>']
-    };
-    if (blockCmd[type]) {
-      if (type === 'h1' || type === 'h2' || type === 'h3') {
-        let node = winSel.anchorNode;
-        while (node && node !== mdBody) {
-          if (node.nodeType === 1 && node.tagName.toLowerCase() === type) {
-            document.execCommand('formatBlock', false, '<p>');
-            syncPreviewToEditor();
-            return;
-          }
-          node = node.parentNode;
-        }
-      }
-      document.execCommand(blockCmd[type][0], false, blockCmd[type][1] || null);
-      syncPreviewToEditor();
-      return;
-    }
     if (type === 'link') {
       const sel = winSel.toString();
       if (sel) document.execCommand('createLink', false, 'url');
@@ -1298,17 +1279,6 @@ function fmt(type) {
       const sel = winSel.toString();
       if (sel) document.execCommand('insertHTML', false, `<code>${winSel.toString()}</code>`);
       else document.execCommand('insertHTML', false, '<code>代码</code>');
-      syncPreviewToEditor();
-      return;
-    }
-    if (type === 'codeblock') {
-      const sel = winSel.toString();
-      document.execCommand('insertHTML', false, `<pre><code>${sel || '\\n'}</code></pre>`);
-      syncPreviewToEditor();
-      return;
-    }
-    if (type === 'hr') {
-      document.execCommand('insertHTML', false, '<hr>');
       syncPreviewToEditor();
       return;
     }
