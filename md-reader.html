@@ -181,7 +181,7 @@ body {
 }
 #preview::-webkit-scrollbar { width: 6px; }
 #preview::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-#editor::-webkit-scrollbar { width: 6px; }
+#editor::-webkit-scrollbar, #editorMirror::-webkit-scrollbar { width: 6px; }
 #editor::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 /* Markdown preview styles */
@@ -486,13 +486,25 @@ kbd {
 <div class="status-bar">
   <span id="wordCount">0 字 · 0 词</span>
   <span id="cursorPos">行 1, 列 1</span>
-  <span class="version-info" title="eosycx × Claude Code">v1.4.3 · 2026-06-02 · eosycx</span>
+  <span class="version-info" id="versionInfo" title="eosycx × Claude Code">v1.4.4 · 2026-06-03 · eosycx</span>
 </div>
 
 <div class="drop-overlay" id="dropOverlay"><span>松开以打开文件</span></div>
 <div class="toast" id="toast"></div>
 
 <script>
+// --- Dynamic credit ---
+// 一份文件不分叉：运行时按域名判断。部署到 cowork（内网）显示「浮丘」，
+// 本地 / GitHub Pages 等其他环境显示原作者 eosycx。
+(function () {
+  var el = document.getElementById('versionInfo');
+  if (!el) return;
+  var isCowork = location.hostname.indexOf('xiaohongshu.com') !== -1;
+  var credit = isCowork ? '浮丘' : 'eosycx';
+  el.textContent = 'v1.4.4 · 2026-06-03 · ' + credit;
+  el.title = credit + ' × Claude Code';
+})();
+
 // --- Minimal Markdown Parser ---
 const MD = {
   parse(src) {
@@ -891,8 +903,9 @@ function measureBlockPx(startLine, endLine) {
   endLine = Math.min(endLine, lines.length - 1);
   if (!window._editorMirror) {
     const m = document.createElement('div');
-    m.style.cssText = 'position:absolute;visibility:hidden;overflow:hidden;white-space:pre-wrap;word-wrap:break-word;';
-    document.body.appendChild(m);
+    m.id = 'editorMirror';
+    m.style.cssText = 'position:absolute;left:0;right:0;top:0;visibility:hidden;pointer-events:none;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;overflow-y:scroll;';
+    editorPane.appendChild(m);
     window._editorMirror = m;
   }
   const mirror = window._editorMirror;
@@ -900,10 +913,11 @@ function measureBlockPx(startLine, endLine) {
   mirror.style.font = cs.font;
   mirror.style.lineHeight = cs.lineHeight;
   mirror.style.letterSpacing = cs.letterSpacing;
+  mirror.style.wordSpacing = cs.wordSpacing;
   mirror.style.padding = cs.padding;
-  mirror.style.boxSizing = 'border-box';
-  mirror.style.width = editor.offsetWidth + 'px';
+  mirror.style.boxSizing = cs.boxSizing;
   mirror.style.tabSize = cs.tabSize;
+  mirror.style.border = cs.border;
   mirror.innerHTML = '';
   const before = lines.slice(0, startLine).join('\n');
   if (before) mirror.appendChild(document.createTextNode(before + '\n'));
@@ -923,10 +937,10 @@ function updateEditorHighlight() {
     return;
   }
   const range = getBlockLineRange(currentHighlightLine);
-  if (_hlCache.line !== currentHighlightLine || _hlCache.width !== editor.offsetWidth) {
+  if (_hlCache.line !== currentHighlightLine || _hlCache.width !== editor.clientWidth) {
     const m = measureBlockPx(range.start, range.end);
     if (!m) { el.style.display = 'none'; return; }
-    _hlCache = { line: currentHighlightLine, top: m.top, height: m.height, width: editor.offsetWidth };
+    _hlCache = { line: currentHighlightLine, top: m.top, height: m.height, width: editor.clientWidth };
   }
   const top = _hlCache.top - editor.scrollTop;
   if (top + _hlCache.height < 0 || top > editor.clientHeight) {
@@ -1208,12 +1222,45 @@ function syncPreviewToEditor() {
   syncingFromPreview = false;
 }
 
+function fmtLine(lineStart, marker, notMarker) {
+  const m = marker.length;
+  const lei = editor.value.indexOf('\n', lineStart);
+  const le = lei === -1 ? editor.value.length : lei;
+  const line = editor.value.substring(lineStart, le);
+  const pm = line.match(/^((?:#{1,6}\s|- \[[ x]\]\s|[-*+]\s|\d+\.\s|>\s)*)/);
+  const pfx = pm[1];
+  const ct = line.substring(pfx.length);
+  if (!ct) return;
+  let on = ct.length > m * 2 && ct.slice(0, m) === marker && ct.slice(-m) === marker;
+  if (on && notMarker) on = ct.slice(0, notMarker.length) !== notMarker || ct.slice(-notMarker.length) !== notMarker;
+  if (on) {
+    editor.value = editor.value.substring(0, lineStart) + pfx + ct.slice(m, -m) + editor.value.substring(le);
+    editor.selectionStart = editor.selectionEnd = lineStart + pfx.length + ct.length - m * 2;
+  } else {
+    editor.value = editor.value.substring(0, lineStart) + pfx + marker + ct + marker + editor.value.substring(le);
+    editor.selectionStart = editor.selectionEnd = lineStart + pfx.length + ct.length + m * 2;
+  }
+}
+
 function fmt(type) {
   if (!editor.value.trim() && !currentFileName) return;
   const mdBody = preview.querySelector('.md-body');
   const winSel = window.getSelection();
-  const inPreview = mdBody && (mdBody.contains(document.activeElement) || (winSel && winSel.anchorNode && mdBody.contains(winSel.anchorNode)));
-  if (inPreview) {
+  const inPreview = mdBody && activePane === 'preview' && (mdBody.contains(document.activeElement) || (winSel && winSel.anchorNode && mdBody.contains(winSel.anchorNode)));
+  if (inPreview && (type === 'ul' || type === 'ol' || type === 'task' || type === 'quote')) {
+    let node = winSel.anchorNode;
+    while (node && node !== mdBody) {
+      if (node.nodeType === 1 && node.hasAttribute('data-source-line')) {
+        const lines = editor.value.split('\n');
+        const sl = parseInt(node.getAttribute('data-source-line'));
+        let pos = 0;
+        for (let i = 0; i < sl && i < lines.length; i++) pos += lines[i].length + 1;
+        editor.selectionStart = editor.selectionEnd = pos;
+        break;
+      }
+      node = node.parentNode;
+    }
+  } else if (inPreview) {
     pushUndo();
     const inlineCmd = { bold: 'bold', italic: 'italic', strike: 'strikeThrough' };
     if (inlineCmd[type]) {
@@ -1222,10 +1269,20 @@ function fmt(type) {
       return;
     }
     const blockCmd = {
-      h1: ['formatBlock', '<h1>'], h2: ['formatBlock', '<h2>'], h3: ['formatBlock', '<h3>'],
-      ul: ['insertUnorderedList'], ol: ['insertOrderedList']
+      h1: ['formatBlock', '<h1>'], h2: ['formatBlock', '<h2>'], h3: ['formatBlock', '<h3>']
     };
     if (blockCmd[type]) {
+      if (type === 'h1' || type === 'h2' || type === 'h3') {
+        let node = winSel.anchorNode;
+        while (node && node !== mdBody) {
+          if (node.nodeType === 1 && node.tagName.toLowerCase() === type) {
+            document.execCommand('formatBlock', false, '<p>');
+            syncPreviewToEditor();
+            return;
+          }
+          node = node.parentNode;
+        }
+      }
       document.execCommand(blockCmd[type][0], false, blockCmd[type][1] || null);
       syncPreviewToEditor();
       return;
@@ -1234,11 +1291,6 @@ function fmt(type) {
       const sel = winSel.toString();
       if (sel) document.execCommand('createLink', false, 'url');
       else document.execCommand('insertHTML', false, '<a href="url">链接文字</a>');
-      syncPreviewToEditor();
-      return;
-    }
-    if (type === 'quote') {
-      document.execCommand('formatBlock', false, '<blockquote>');
       syncPreviewToEditor();
       return;
     }
@@ -1252,12 +1304,6 @@ function fmt(type) {
     if (type === 'codeblock') {
       const sel = winSel.toString();
       document.execCommand('insertHTML', false, `<pre><code>${sel || '\\n'}</code></pre>`);
-      syncPreviewToEditor();
-      return;
-    }
-    if (type === 'task') {
-      const sel = winSel.toString();
-      document.execCommand('insertHTML', false, `<ul><li class="task-list-item"><input type="checkbox" disabled>${sel || '任务'}</li></ul>`);
       syncPreviewToEditor();
       return;
     }
@@ -1282,58 +1328,109 @@ function fmt(type) {
 
   switch (type) {
     case 'bold':
-      insert = sel ? `**${sel}**` : '**粗体**';
-      editor.value = before + insert + after;
-      if (sel) { editor.selectionStart = start; editor.selectionEnd = start + insert.length; }
-      else { editor.selectionStart = start + 2; editor.selectionEnd = start + 4; }
+      if (sel.startsWith('**') && sel.endsWith('**') && sel.length > 4) {
+        editor.value = before + sel.slice(2, -2) + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + sel.length - 4;
+      } else if (sel) {
+        insert = `**${sel}**`;
+        editor.value = before + insert + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + insert.length;
+      } else {
+        fmtLine(lineStart, '**');
+      }
       break;
     case 'italic':
-      insert = sel ? `*${sel}*` : '*斜体*';
-      editor.value = before + insert + after;
-      if (sel) { editor.selectionStart = start; editor.selectionEnd = start + insert.length; }
-      else { editor.selectionStart = start + 1; editor.selectionEnd = start + 3; }
+      if (sel.length > 2 && sel[0] === '*' && sel[sel.length - 1] === '*' && !(sel.startsWith('**') && sel.endsWith('**'))) {
+        editor.value = before + sel.slice(1, -1) + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + sel.length - 2;
+      } else if (sel) {
+        insert = `*${sel}*`;
+        editor.value = before + insert + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + insert.length;
+      } else {
+        fmtLine(lineStart, '*', '**');
+      }
       break;
     case 'strike':
-      insert = sel ? `~~${sel}~~` : '~~删除线~~';
-      editor.value = before + insert + after;
-      if (sel) { editor.selectionStart = start; editor.selectionEnd = start + insert.length; }
-      else { editor.selectionStart = start + 2; editor.selectionEnd = start + 5; }
+      if (sel.startsWith('~~') && sel.endsWith('~~') && sel.length > 4) {
+        editor.value = before + sel.slice(2, -2) + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + sel.length - 4;
+      } else if (sel) {
+        insert = `~~${sel}~~`;
+        editor.value = before + insert + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + insert.length;
+      } else {
+        fmtLine(lineStart, '~~');
+      }
       break;
     case 'code':
-      insert = sel ? `\`${sel}\`` : '`代码`';
-      editor.value = before + insert + after;
-      if (sel) { editor.selectionStart = start; editor.selectionEnd = start + insert.length; }
-      else { editor.selectionStart = start + 1; editor.selectionEnd = start + 3; }
+      if (sel.startsWith('`') && sel.endsWith('`') && sel.length > 2) {
+        editor.value = before + sel.slice(1, -1) + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + sel.length - 2;
+      } else if (sel) {
+        insert = `\`${sel}\``;
+        editor.value = before + insert + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + insert.length;
+      } else {
+        fmtLine(lineStart, '`');
+      }
       break;
     case 'h1': case 'h2': case 'h3': {
       const level = parseInt(type[1]);
-      const prefix = '#'.repeat(level) + ' ';
-      const cleanLine = currentLine.replace(/^#{1,6}\s*/, '');
-      editor.value = before.substring(0, lineStart) + prefix + cleanLine + editor.value.substring(start);
-      const newPos = lineStart + prefix.length + cleanLine.length;
+      const lineEndIdx = editor.value.indexOf('\n', lineStart);
+      const fullLineEnd = lineEndIdx === -1 ? editor.value.length : lineEndIdx;
+      const fullLine = editor.value.substring(lineStart, fullLineEnd);
+      const cleanLine = fullLine.replace(/^#{1,6}\s*/, '');
+      const isSameLevel = new RegExp('^#{' + level + '}\\s').test(fullLine);
+      const newPrefix = isSameLevel ? '' : '#'.repeat(level) + ' ';
+      editor.value = editor.value.substring(0, lineStart) + newPrefix + cleanLine + editor.value.substring(fullLineEnd);
+      const newPos = lineStart + newPrefix.length + cleanLine.length;
       editor.selectionStart = editor.selectionEnd = newPos;
       break;
     }
-    case 'ul':
-      insert = sel ? sel.split('\n').map(l => `- ${l}`).join('\n') : '- ';
-      editor.value = before + insert + after;
-      editor.selectionStart = editor.selectionEnd = start + insert.length;
+    case 'ul': case 'ol': case 'task': case 'quote': {
+      const prefixes = { ul: '- ', ol: /^\d+\.\s/, task: /^- \[[ x]\]\s/, quote: '> ' };
+      const myPfx = prefixes[type];
+      const isMyPfx = l => typeof myPfx === 'string' ? l.startsWith(myPfx) : myPfx.test(l);
+      const stripMyPfx = l => typeof myPfx === 'string' ? l.substring(myPfx.length) : l.replace(myPfx, '');
+      const addPfx = (l, i) => {
+        const clean = l.replace(/^([-*+]\s|\d+\.\s|- \[[ x]\]\s|>\s)/, '');
+        if (type === 'ol') return `${i + 1}. ${clean}`;
+        if (type === 'task') return `- [ ] ${clean}`;
+        if (type === 'quote') return `> ${clean}`;
+        return `- ${clean}`;
+      };
+      if (sel) {
+        const lines = sel.split('\n');
+        const allOn = lines.every(l => isMyPfx(l));
+        insert = allOn ? lines.map(stripMyPfx).join('\n') : lines.map(addPfx).join('\n');
+        editor.value = before + insert + after;
+        editor.selectionStart = start;
+        editor.selectionEnd = start + insert.length;
+      } else {
+        const lei = editor.value.indexOf('\n', lineStart);
+        const le = lei === -1 ? editor.value.length : lei;
+        const fl = editor.value.substring(lineStart, le);
+        if (isMyPfx(fl)) {
+          const nl = stripMyPfx(fl);
+          editor.value = editor.value.substring(0, lineStart) + nl + editor.value.substring(le);
+          editor.selectionStart = editor.selectionEnd = lineStart + nl.length;
+        } else {
+          const nl = addPfx(fl, 0);
+          editor.value = editor.value.substring(0, lineStart) + nl + editor.value.substring(le);
+          editor.selectionStart = editor.selectionEnd = lineStart + nl.length;
+        }
+      }
       break;
-    case 'ol':
-      insert = sel ? sel.split('\n').map((l, i) => `${i + 1}. ${l}`).join('\n') : '1. ';
-      editor.value = before + insert + after;
-      editor.selectionStart = editor.selectionEnd = start + insert.length;
-      break;
-    case 'task':
-      insert = sel ? sel.split('\n').map(l => `- [ ] ${l}`).join('\n') : '- [ ] ';
-      editor.value = before + insert + after;
-      editor.selectionStart = editor.selectionEnd = start + insert.length;
-      break;
-    case 'quote':
-      insert = sel ? sel.split('\n').map(l => `> ${l}`).join('\n') : '> ';
-      editor.value = before + insert + after;
-      editor.selectionStart = editor.selectionEnd = start + insert.length;
-      break;
+    }
     case 'link':
       if (sel) {
         insert = `[${sel}](url)`;
@@ -1504,6 +1601,11 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 1500);
 }
+
+// --- Toolbar: prevent focus steal so selection in contenteditable is preserved ---
+document.querySelector('.toolbar').addEventListener('mousedown', e => {
+  if (e.target.closest('button')) e.preventDefault();
+});
 
 // --- Scroll & Highlight Sync ---
 editor.addEventListener('mousedown', () => { activePane = 'editor'; });
