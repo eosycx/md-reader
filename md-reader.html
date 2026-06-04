@@ -643,7 +643,7 @@ const MD = {
         let content = listMatch[1];
         const taskMatch = content.match(/^\[([ xX])\]\s*(.*)/);
         if (taskMatch) {
-          const checked = taskMatch[1] !== ' ' ? ' checked disabled' : ' disabled';
+          const checked = taskMatch[1] !== ' ' ? ' checked' : '';
           content = `<input type="checkbox"${checked}>${this.inline(taskMatch[2])}`;
           items.push({ content, isTask: true });
         } else {
@@ -1019,6 +1019,35 @@ function setupPreviewEditing() {
     syncEditorToPreviewCursor();
   });
   mdBody.addEventListener('mousedown', () => { activePane = 'preview'; });
+  mdBody.addEventListener('change', e => {
+    if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') {
+      const li = e.target.closest('li');
+      if (!li) return;
+      const ul = li.closest('ul');
+      if (!ul) return;
+      const srcLine = ul.closest('[data-source-line]');
+      if (!srcLine) return;
+      const liIdx = [...ul.children].filter(c => c.tagName === 'LI').indexOf(li);
+      const sl = parseInt(srcLine.getAttribute('data-source-line'));
+      const lines = editor.value.split('\n');
+      let taskCount = 0;
+      for (let i = sl; i < lines.length; i++) {
+        const m = lines[i].match(/^(\s*- \[)([ xX])(\] )/);
+        if (m) {
+          if (taskCount === liIdx) {
+            syncingFromPreview = true;
+            pushUndo();
+            lines[i] = m[1] + (e.target.checked ? 'x' : ' ') + m[3] + lines[i].substring(m[0].length);
+            editor.value = lines.join('\n');
+            setModified(true);
+            syncingFromPreview = false;
+            return;
+          }
+          taskCount++;
+        }
+      }
+    }
+  });
   mdBody.addEventListener('click', syncEditorToPreviewCursor);
   mdBody.addEventListener('keyup', syncEditorToPreviewCursor);
   mdBody.addEventListener('keydown', e => {
