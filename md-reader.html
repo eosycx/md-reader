@@ -195,6 +195,46 @@ body {
 .md-body p { margin: 0 0 16px; line-height: 1.7; }
 .md-body a { color: var(--accent); text-decoration: none; }
 .md-body a:hover { text-decoration: underline; }
+.link-popover {
+  position: absolute;
+  display: none;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px var(--shadow);
+  z-index: 200;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.link-popover .lp-url {
+  color: var(--text-secondary);
+  text-decoration: none;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.link-popover .lp-url:hover { background: var(--border); color: var(--text); }
+.link-popover .lp-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+.link-popover .lp-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.link-popover .lp-btn:hover { background: var(--border); color: var(--text); }
 .md-body strong { font-weight: 600; }
 .md-body em { font-style: italic; }
 .md-body del { text-decoration: line-through; color: var(--text-secondary); }
@@ -475,6 +515,13 @@ kbd {
 <div class="main">
   <div class="preview-pane" id="previewPane">
     <div id="preview"></div>
+    <div id="linkPopover" class="link-popover">
+      <a class="lp-url" target="_blank" rel="noopener"></a>
+      <span class="lp-divider"></span>
+      <button class="lp-btn lp-open">打开</button>
+      <span class="lp-divider"></span>
+      <button class="lp-btn lp-edit">编辑</button>
+    </div>
   </div>
   <div class="gutter" id="gutter"></div>
   <div class="editor-pane" id="editorPane">
@@ -1058,6 +1105,83 @@ function setupPreviewEditing() {
     if (mod && e.key === 'z' && e.shiftKey) {
       e.preventDefault(); redo();
     }
+  });
+  setupLinkPopover(mdBody);
+}
+
+function setupLinkPopover(mdBody) {
+  const pop = document.getElementById('linkPopover');
+  const urlEl = pop.querySelector('.lp-url');
+  const openBtn = pop.querySelector('.lp-open');
+  const editBtn = pop.querySelector('.lp-edit');
+  let hideTimer = null;
+  let currentAnchor = null;
+
+  function shortUrl(href) {
+    try {
+      const u = new URL(href);
+      return u.hostname + (u.pathname.length > 1 ? '/…' : '');
+    } catch { return href.length > 24 ? href.slice(0, 24) + '…' : href; }
+  }
+
+  function show(anchor) {
+    clearTimeout(hideTimer);
+    currentAnchor = anchor;
+    const href = anchor.getAttribute('href') || '';
+    urlEl.textContent = shortUrl(href);
+    urlEl.href = href;
+    pop.style.display = 'flex';
+    const rect = anchor.getBoundingClientRect();
+    const pane = previewPane.getBoundingClientRect();
+    let left = rect.left - pane.left;
+    let top = rect.bottom - pane.top + previewPane.scrollTop + 4;
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    const popRight = left + pop.offsetWidth;
+    if (popRight > pane.width - 8) {
+      pop.style.left = Math.max(4, pane.width - pop.offsetWidth - 8) + 'px';
+    }
+  }
+
+  function hide() {
+    hideTimer = setTimeout(() => {
+      pop.style.display = 'none';
+      currentAnchor = null;
+    }, 150);
+  }
+
+  mdBody.addEventListener('mouseover', e => {
+    const a = e.target.closest('a[href]');
+    if (a && mdBody.contains(a)) show(a);
+  });
+  mdBody.addEventListener('mouseout', e => {
+    const a = e.target.closest('a[href]');
+    if (a) hide();
+  });
+  pop.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+  pop.addEventListener('mouseleave', () => hide());
+
+  openBtn.addEventListener('click', e => {
+    e.preventDefault();
+    if (currentAnchor) window.open(currentAnchor.getAttribute('href'), '_blank');
+  });
+
+  editBtn.addEventListener('click', e => {
+    e.preventDefault();
+    if (!currentAnchor) return;
+    const href = currentAnchor.getAttribute('href') || '';
+    const text = currentAnchor.textContent || '';
+    const src = editor.value;
+    const linkMd = `[${text}](${href})`;
+    const idx = src.indexOf(linkMd);
+    if (idx !== -1) {
+      const urlStart = idx + text.length + 3;
+      if (currentView === 'preview') setView('split');
+      editor.focus();
+      editor.selectionStart = urlStart;
+      editor.selectionEnd = urlStart + href.length;
+    }
+    pop.style.display = 'none';
   });
 }
 
