@@ -573,6 +573,7 @@ const MD = {
     s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     s = s.replace(/  \n/g, '<br>');
+    s = s.replace(/\n/g, '<br>');
     return s;
   },
   blocks(src, startLine) {
@@ -746,6 +747,9 @@ function pushUndo() {
 }
 
 function undo() {
+  if (undoTimer) { clearTimeout(undoTimer); undoTimer = null; pushUndo(); }
+  if (!undoStack.length) return;
+  if (undoStack[undoStack.length - 1] === editor.value) undoStack.pop();
   if (!undoStack.length) return;
   redoStack.push(editor.value);
   editor.value = undoStack.pop();
@@ -1666,10 +1670,13 @@ editor.addEventListener('keydown', e => {
 });
 
 // --- Events ---
+editor.addEventListener('beforeinput', () => {
+  if (!undoTimer) pushUndo();
+});
 editor.addEventListener('input', () => {
   setModified(true);
   clearTimeout(undoTimer);
-  undoTimer = setTimeout(() => pushUndo(), 500);
+  undoTimer = setTimeout(() => { pushUndo(); undoTimer = null; }, 500);
   render();
 });
 editor.addEventListener('click', updateCursor);
