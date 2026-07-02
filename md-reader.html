@@ -459,6 +459,14 @@ kbd {
   padding-left: max(32px, calc(50% - 400px));
   padding-right: max(32px, calc(50% - 400px));
 }
+.img-auth-bar {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 16px; background: #fff8e1; border-bottom: 2px solid #ffe082;
+  font-size: 14px; color: #5d4037; cursor: pointer; font-weight: 500;
+}
+.img-auth-bar:hover { background: #ffecb3; }
+.dark .img-auth-bar { background: #3e2723; border-color: #5d4037; color: #ffe082; }
+.dark .img-auth-bar:hover { background: #4e342e; }
 </style>
 </head>
 <body>
@@ -533,7 +541,7 @@ kbd {
 <div class="status-bar">
   <span id="wordCount">0 字 · 0 词</span>
   <span id="cursorPos">行 1, 列 1</span>
-  <span class="version-info" id="versionInfo" title="eosycx × Claude Code">v1.4.4 · 2026-06-03 · eosycx</span>
+  <span class="version-info" id="versionInfo" title="eosycx × Claude Code">v1.4.5 · 2026-07-02 · eosycx</span>
 </div>
 
 <div class="drop-overlay" id="dropOverlay"><span>松开以打开文件</span></div>
@@ -548,7 +556,7 @@ kbd {
   if (!el) return;
   var isCowork = location.hostname.indexOf('xiaohongshu.com') !== -1;
   var credit = isCowork ? '浮丘' : 'eosycx';
-  el.textContent = 'v1.4.4 · 2026-06-03 · ' + credit;
+  el.textContent = 'v1.4.5 · 2026-07-02 · ' + credit;
   el.title = credit + ' × Claude Code';
 })();
 
@@ -565,6 +573,7 @@ const MD = {
     s = this.esc(s);
     s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
     s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    const _prot = []; s = s.replace(/<(?:img|a)\s[^>]*>/g, m => { _prot.push(m); return '\x00T' + (_prot.length-1) + '\x00'; });
     s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
@@ -572,6 +581,7 @@ const MD = {
     s = s.replace(/_(.+?)_/g, '<em>$1</em>');
     s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\x00T(\d+)\x00/g, (m, i) => _prot[parseInt(i)]);
     s = s.replace(/  \n/g, '<br>');
     s = s.replace(/\n/g, '<br>');
     return s;
@@ -716,6 +726,7 @@ const MD = {
 
 // --- App State ---
 let fileHandle = null;
+const _imgCache = {};
 let modified = false;
 let currentFileName = '';
 let currentView = 'split';
@@ -1021,7 +1032,97 @@ function syncHighlight() {
   }
 }
 
-// --- Render ---
+// --- Image Resolution ---
+function _idb() {
+  return new Promise((ok, no) => {
+    const r = indexedDB.open('mdreader', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('h');
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => no(r.error);
+  });
+}
+async function _saveDH(dh) { const db = await _idb(); const tx = db.transaction('h','readwrite'); tx.objectStore('h').put(dh,'dir'); }
+async function _loadDH() { try { const db = await _idb(); return await new Promise(r => { const q = db.transaction('h').objectStore('h').get('dir'); q.onsuccess = () => r(q.result||null); q.onerror = () => r(null); }); } catch { return null; } }
+
+function resolveImages() {
+  if (!Object.keys(_imgCache).length) return;
+  for (const img of preview.querySelectorAll('img')) {
+    const src = img.getAttribute('src');
+    if (!src || /^(https?:|data:|blob:)/.test(src)) continue;
+    const decoded = decodeURIComponent(src);
+    if (_imgCache[decoded]) img.src = _imgCache[decoded];
+  }
+}
+
+async function tryAutoLoadImages() {
+  if (!window.showDirectoryPicker) return false;
+  const dh = await _loadDH();
+  if (!dh) return false;
+  try {
+    const perm = await dh.queryPermission({ mode: 'read' });
+    if (perm === 'granted') { await loadImagesFromDirHandle(dh); return true; }
+  } catch {}
+  return false;
+}
+
+function showImgAuthBar() {
+  if (document.querySelector('.img-auth-bar')) return;
+  const bar = document.createElement('div');
+  bar.className = 'img-auth-bar';
+  bar.textContent = '\u{1F4C2} 此文档包含本地图片 — 点击此处授权文件夹以显示（仅需一次）';
+  bar.onclick = grantImgDir;
+  document.body.insertBefore(bar, document.querySelector('.toolbar').nextSibling);
+}
+
+async function grantImgDir() {
+  if (window.showDirectoryPicker) {
+    try {
+      const saved = await _loadDH();
+      if (saved) {
+        const perm = await saved.requestPermission({ mode: 'read' });
+        if (perm === 'granted') { await loadImagesFromDirHandle(saved); return; }
+      }
+      const opts = { id: 'md-img' };
+      if (fileHandle) opts.startIn = fileHandle;
+      const dh = await window.showDirectoryPicker(opts);
+      await _saveDH(dh);
+      await loadImagesFromDirHandle(dh);
+    } catch { return; }
+  } else {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.webkitdirectory = true;
+    input.onchange = () => {
+      for (const file of input.files) {
+        if (!file.type.startsWith('image/')) continue;
+        const rel = file.webkitRelativePath.split('/').slice(1).join('/');
+        if (rel) _imgCache[rel] = URL.createObjectURL(file);
+      }
+      const bar = document.querySelector('.img-auth-bar');
+      if (bar) bar.remove();
+      resolveImages();
+    };
+    input.click();
+  }
+}
+
+async function loadImagesFromDirHandle(dh, prefix) {
+  for await (const [name, handle] of dh) {
+    const path = prefix ? prefix + '/' + name : name;
+    if (handle.kind === 'directory') {
+      await loadImagesFromDirHandle(handle, path);
+    } else if (/\.(jpe?g|png|gif|webp|svg|bmp)$/i.test(name)) {
+      const file = await handle.getFile();
+      _imgCache[path] = URL.createObjectURL(file);
+    }
+  }
+  if (!prefix) {
+    const bar = document.querySelector('.img-auth-bar');
+    if (bar) bar.remove();
+    resolveImages();
+  }
+}
+
 function render() {
   if (syncingFromPreview) return;
   const text = editor.value;
@@ -1032,6 +1133,7 @@ function render() {
     preview.innerHTML = `<div class="md-body" contenteditable="${editable}" spellcheck="false">${MD.parse(text)}</div>`;
     if (editable === 'true') setupPreviewEditing();
   }
+  resolveImages();
   updateWordCount();
   _hlCache.line = -1;
   if (currentView === 'split') applyHighlight();
@@ -1225,8 +1327,11 @@ async function openFile() {
       editor.value = text;
       currentFileName = file.name;
       document.title = `${file.name} — MD Reader`;
+      for (const u of Object.values(_imgCache)) URL.revokeObjectURL(u);
+      for (const k in _imgCache) delete _imgCache[k];
       setModified(false);
       render();
+      if (text.includes('![')) tryAutoLoadImages().then(ok => { if (!ok) showImgAuthBar(); });
       toast('已打开');
     } catch (e) { if (e.name !== 'AbortError') console.error(e); }
   } else {
@@ -1241,8 +1346,11 @@ async function openFile() {
       currentFileName = file.name;
       document.title = `${file.name} — MD Reader`;
       fileHandle = null;
+      for (const u of Object.values(_imgCache)) URL.revokeObjectURL(u);
+      for (const k in _imgCache) delete _imgCache[k];
       setModified(false);
       render();
+      if (text.includes('![')) tryAutoLoadImages().then(ok => { if (!ok) showImgAuthBar(); });
       toast('已打开');
     };
     input.click();
@@ -1699,11 +1807,15 @@ document.addEventListener('drop', async e => {
         if (handle.kind === 'file') {
           fileHandle = handle;
           const file = await handle.getFile();
-          editor.value = await file.text();
+          const text = await file.text();
+          editor.value = text;
           currentFileName = file.name;
           document.title = `${file.name} — MD Reader`;
+          for (const u of Object.values(_imgCache)) URL.revokeObjectURL(u);
+          for (const k in _imgCache) delete _imgCache[k];
           setModified(false);
           render();
+          if (text.includes('![')) tryAutoLoadImages().then(ok => { if (!ok) showImgAuthBar(); });
           toast('已打开');
           return;
         }
@@ -1711,12 +1823,16 @@ document.addEventListener('drop', async e => {
     }
     const file = items[0].getAsFile();
     if (file) {
-      editor.value = await file.text();
+      const text = await file.text();
+      editor.value = text;
       currentFileName = file.name;
       document.title = `${file.name} — MD Reader`;
       fileHandle = null;
+      for (const u of Object.values(_imgCache)) URL.revokeObjectURL(u);
+      for (const k in _imgCache) delete _imgCache[k];
       setModified(false);
       render();
+      if (text.includes('![')) tryAutoLoadImages().then(ok => { if (!ok) showImgAuthBar(); });
       toast('已打开');
     }
   }

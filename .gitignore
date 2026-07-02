@@ -1,2 +1,22 @@
+# ===== 不要 push 到 GitHub 的内容 =====
+
+# 系统垃圾
 .DS_Store
+
+# 历史版本快照目录 —— 仅本地留档，不进公开仓库
 archive/
+
+# 内部维护记录，含内网信息（Cowork URL / workId / 内部 credit），禁止 push
+CHANGELOG.md
+
+# 本地参考文档，不进公开仓库
+COMMONMARK-REFERENCE.md
+
+# 传播留底，含内网 cowork 信息，禁止 push
+promotion/
+
+# Cowork 内网发布包（如果未来 cp 到本目录，也一并挡掉）
+code/
+.cowork.json
+.cowork/
+poster.png
