@@ -42,16 +42,51 @@
 Download [`md-reader.html`](md-reader.html) and open in any browser. Works fully offline.
 
 <details>
-<summary>macOS Desktop App</summary>
+<summary>macOS Desktop App (with "Open With" support)</summary>
+
+Build the app bundle and register it as a handler for `.md` files:
 
 ```bash
-APP="$HOME/Desktop/MD Reader.app"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+APP="$HOME/Applications/MD Reader.app"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Scripts"
+
+# Copy resources
 cp AppIcon.icns "$APP/Contents/Resources/"
 cp Info.plist "$APP/Contents/"
-cp launch.sh "$APP/Contents/MacOS/launch"
+cp md-reader.html "$APP/Contents/Resources/"
+cp launch.sh "$APP/Contents/Resources/launch-core.sh"
+chmod +x "$APP/Contents/Resources/launch-core.sh"
+
+# Build AppleScript droplet (handles macOS "Open With" file events)
+cat > /tmp/_mdreader.applescript << 'EOF'
+property coreScript : ""
+on run
+    set coreScript to (POSIX path of (path to me)) & "Contents/Resources/launch-core.sh"
+    do shell script "bash " & quoted form of coreScript
+end run
+on open theFiles
+    set coreScript to (POSIX path of (path to me)) & "Contents/Resources/launch-core.sh"
+    repeat with f in theFiles
+        do shell script "bash " & quoted form of coreScript & " " & quoted form of POSIX path of f
+    end repeat
+end open
+EOF
+osacompile -o /tmp/_mdreader_droplet.app /tmp/_mdreader.applescript
+cp /tmp/_mdreader_droplet.app/Contents/MacOS/droplet "$APP/Contents/MacOS/launch"
+cp /tmp/_mdreader_droplet.app/Contents/Resources/Scripts/main.scpt "$APP/Contents/Resources/Scripts/"
+cp /tmp/_mdreader_droplet.app/Contents/Resources/droplet.rsrc "$APP/Contents/Resources/launch.rsrc"
+rm -rf /tmp/_mdreader_droplet.app /tmp/_mdreader.applescript
 chmod +x "$APP/Contents/MacOS/launch"
+
+# Register with macOS so it appears in "Open With" menus
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
 ```
+
+After building, you can:
+- Right-click any `.md` file → **Open With** → **MD Reader**
+- Set it as the **default app** for `.md` files (Get Info → Open with → Change All)
+- Open from terminal: `open -a "MD Reader" file.md`
+
 </details>
 
 ## License

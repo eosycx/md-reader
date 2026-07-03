@@ -1887,20 +1887,26 @@ function showGuide() {
 // --- Init ---
 render();
 
-// Open file from URL params (for integration with "open with" workflows)
-const params = new URLSearchParams(location.search);
-if (params.get('file')) {
-  fetch(params.get('file'))
-    .then(r => r.text())
-    .then(text => {
-      editor.value = text;
-      currentFileName = params.get('file').split('/').pop();
+// Auto-load file from URL hash (when opened via system "Open With")
+try {
+  const hash = location.hash;
+  if (hash.startsWith('#open=')) {
+    const b64 = hash.slice(6);
+    const decoded = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+    const data = JSON.parse(decoded);
+    if (data.c) {
+      editor.value = data.c;
+      currentFileName = data.n || 'untitled.md';
       document.title = `${currentFileName} — MD Reader`;
+      fileHandle = null;
       setModified(false);
       render();
-    })
-    .catch(() => {});
-}
+      if (data.c.includes('![')) tryAutoLoadImages().then(ok => { if (!ok) showImgAuthBar(); });
+      history.replaceState(null, '', location.pathname);
+      toast('已打开');
+    }
+  }
+} catch(e) { console.error('Auto-load:', e); }
 </script>
 </body>
 </html>
