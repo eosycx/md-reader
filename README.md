@@ -9,6 +9,14 @@
   <strong><a href="https://eosycx.github.io/md-reader/md-reader.html">Open in browser</a></strong>
 </p>
 
+## macOS App
+
+1. [Download MD Reader 1.4.5](https://github.com/eosycx/md-reader/releases/download/v1.4.5/MD%20Reader-1.4.5.dmg).
+2. Open the DMG and drag **MD Reader** onto the **Applications** shortcut.
+3. Open **MD Reader** from Applications.
+
+The app is ad-hoc signed but not Developer ID signed or notarized. If macOS blocks the first launch, Control-click the app, choose **Open**, then confirm **Open**. You can verify the download with the published [SHA-256 checksum](https://github.com/eosycx/md-reader/releases/download/v1.4.5/MD%20Reader-1.4.5.dmg.sha256).
+
 ## Features
 
 - Drag & drop or `Cmd+O` to open `.md` / `.txt` files; `Cmd+S` saves back to the original file (Chrome)
