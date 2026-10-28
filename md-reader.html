@@ -502,6 +502,9 @@ kbd {
   <span class="file-name" id="fileName">未打开文件</span>
   <div class="toolbar-divider"></div>
   <div class="toolbar-group">
+    <button onclick="grantImgDir()" data-tip="更换/刷新图片目录"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg></button>
+  </div>
+  <div class="toolbar-group">
     <button id="btnEdit" class="active" onclick="setView('split')" data-tip="分栏模式  ⌘1">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
     </button>
@@ -1033,6 +1036,11 @@ function syncHighlight() {
 }
 
 // --- Image Resolution ---
+// Persist the selected directory handle and matched image data across sessions.
+let _sessionDirHandle = null;
+let _imgAuthPending = false;
+let _docRefImgNorms = null;
+
 function _idb() {
   return new Promise((ok, no) => {
     const r = indexedDB.open('mdreader', 1);
@@ -1041,8 +1049,55 @@ function _idb() {
     r.onerror = () => no(r.error);
   });
 }
-async function _saveDH(dh) { const db = await _idb(); const tx = db.transaction('h','readwrite'); tx.objectStore('h').put(dh,'dir'); }
+async function _saveDH(dh) { try { const db = await _idb(); const tx = db.transaction('h','readwrite'); tx.objectStore('h').put(dh,'dir'); } catch {} }
 async function _loadDH() { try { const db = await _idb(); return await new Promise(r => { const q = db.transaction('h').objectStore('h').get('dir'); q.onsuccess = () => r(q.result||null); q.onerror = () => r(null); }); } catch { return null; } }
+
+function _imgDB() {
+  return new Promise((ok, no) => {
+    const r = indexedDB.open('mdreader-imgs', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('d');
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => no(r.error);
+  });
+}
+async function _saveImgToDB(path, buf, tp) {
+  try {
+    const db = await _imgDB();
+    await new Promise((ok, no) => {
+      const tx = db.transaction('d', 'readwrite');
+      tx.objectStore('d').put({buf, tp}, path);
+      tx.oncomplete = ok;
+      tx.onerror = () => no(tx.error);
+      tx.onabort = () => no(tx.error);
+    });
+  } catch {}
+}
+async function _getImgFromDB(path) { try { const db = await _imgDB(); return await new Promise(r => { const q = db.transaction('d').objectStore('d').get(path); q.onsuccess=()=>r(q.result||null); q.onerror=()=>r(null); }); } catch { return null; } }
+async function _getAllImgDBKeys() { try { const db = await _imgDB(); return await new Promise(r => { const q = db.transaction('d').objectStore('d').getAllKeys(); q.onsuccess=()=>r(q.result||[]); q.onerror=()=>r([]); }); } catch { return []; } }
+
+async function tryLoadImagesFromPersistedCache() {
+  const keys = await _getAllImgDBKeys();
+  const localImgs = Array.from(preview.querySelectorAll('img')).filter(img => {
+    const src = img.getAttribute('src');
+    return src && !/^(https?:|data:|blob:)/.test(src);
+  });
+  if (!localImgs.length) return true;
+  if (!keys.length) return false;
+  let allFound = true;
+  for (const img of localImgs) {
+    const decoded = decodeURIComponent(img.getAttribute('src') || '');
+    const norm = decoded.replace(/^(\.\.\/|\.\/)+/, '');
+    if (_imgCache[decoded] || _imgCache[norm]) continue;
+    if (Object.keys(_imgCache).find(k => k.endsWith('/' + norm))) continue;
+    const match = keys.find(k => k === decoded || k === norm || k.endsWith('/' + norm));
+    if (!match) { allFound = false; continue; }
+    const data = await _getImgFromDB(match);
+    if (!data) { allFound = false; continue; }
+    _imgCache[match] = URL.createObjectURL(new Blob([data.buf], { type: data.tp || 'image/png' }));
+  }
+  resolveImages();
+  return allFound;
+}
 
 function resolveImages() {
   if (!Object.keys(_imgCache).length) return;
@@ -1050,44 +1105,61 @@ function resolveImages() {
     const src = img.getAttribute('src');
     if (!src || /^(https?:|data:|blob:)/.test(src)) continue;
     const decoded = decodeURIComponent(src);
-    if (_imgCache[decoded]) img.src = _imgCache[decoded];
+    if (_imgCache[decoded]) { img.src = _imgCache[decoded]; continue; }
+    const normalized = decoded.replace(/^(\.\.\/|\.\/)+/, '');
+    if (_imgCache[normalized]) { img.src = _imgCache[normalized]; continue; }
+    const match = Object.keys(_imgCache).find(k => k === normalized || k.endsWith('/' + normalized));
+    if (match) img.src = _imgCache[match];
   }
 }
 
 async function tryAutoLoadImages() {
+  if (_sessionDirHandle) {
+    try { await loadImagesFromDirHandle(_sessionDirHandle); return true; } catch {}
+  }
+  if (await tryLoadImagesFromPersistedCache()) return true;
   if (!window.showDirectoryPicker) return false;
   const dh = await _loadDH();
   if (!dh) return false;
-  try {
-    const perm = await dh.queryPermission({ mode: 'read' });
-    if (perm === 'granted') { await loadImagesFromDirHandle(dh); return true; }
-  } catch {}
+  let accessible = false;
+  try { for await (const _ of dh) { break; } accessible = true; } catch {}
+  if (accessible) { _sessionDirHandle = dh; await loadImagesFromDirHandle(dh); return true; }
   return false;
 }
 
-function showImgAuthBar() {
+async function showImgAuthBar() {
+  if (_sessionDirHandle || _imgAuthPending) return;
   if (document.querySelector('.img-auth-bar')) return;
   const bar = document.createElement('div');
   bar.className = 'img-auth-bar';
-  bar.textContent = '\u{1F4C2} 此文档包含本地图片 — 点击此处授权文件夹以显示（仅需一次）';
-  bar.onclick = grantImgDir;
+  const keys = await _getAllImgDBKeys();
+  const localImgs = Array.from(preview.querySelectorAll('img')).filter(img => {
+    const src = img.getAttribute('src');
+    return src && !/^(https?:|data:|blob:)/.test(src);
+  });
+  const matchCount = localImgs.filter(img => {
+    const decoded = decodeURIComponent(img.getAttribute('src') || '');
+    const norm = decoded.replace(/^(\.\.\/|\.\/)+/, '');
+    return keys.some(k => k === decoded || k === norm || k.endsWith('/' + norm));
+  }).length;
+  bar.textContent = keys.length === 0
+    ? '\u{1F4C2} 此文档包含本地图片 — 点击选择图片所在文件夹'
+    : `\u{1F4C2} 已缓存 ${keys.length} 张图片，本文仍有 ${localImgs.length - matchCount} 张待定位 — 点击重新选择文件夹`;
+  bar.onclick = () => { bar.remove(); grantImgDir(); };
   document.body.insertBefore(bar, document.querySelector('.toolbar').nextSibling);
 }
 
 async function grantImgDir() {
+  _imgAuthPending = true;
   if (window.showDirectoryPicker) {
     try {
-      const saved = await _loadDH();
-      if (saved) {
-        const perm = await saved.requestPermission({ mode: 'read' });
-        if (perm === 'granted') { await loadImagesFromDirHandle(saved); return; }
-      }
-      const opts = { id: 'md-img' };
+      const opts = { id: 'md-reader-images' };
       if (fileHandle) opts.startIn = fileHandle;
       const dh = await window.showDirectoryPicker(opts);
+      _sessionDirHandle = dh;
       await _saveDH(dh);
       await loadImagesFromDirHandle(dh);
-    } catch { return; }
+    } catch {}
   } else {
     const input = document.createElement('input');
     input.type = 'file';
@@ -1104,19 +1176,39 @@ async function grantImgDir() {
     };
     input.click();
   }
+  _imgAuthPending = false;
 }
 
 async function loadImagesFromDirHandle(dh, prefix) {
-  for await (const [name, handle] of dh) {
-    const path = prefix ? prefix + '/' + name : name;
-    if (handle.kind === 'directory') {
-      await loadImagesFromDirHandle(handle, path);
-    } else if (/\.(jpe?g|png|gif|webp|svg|bmp)$/i.test(name)) {
-      const file = await handle.getFile();
-      _imgCache[path] = URL.createObjectURL(file);
-    }
+  const isRoot = !prefix;
+  if (isRoot) {
+    _docRefImgNorms = Array.from(preview.querySelectorAll('img'))
+      .map(img => decodeURIComponent(img.getAttribute('src') || ''))
+      .filter(src => src && !/^(https?:|data:|blob:)/.test(src))
+      .map(src => src.replace(/^(\.\.\/|\.\/)+/, ''));
   }
-  if (!prefix) {
+  try {
+    for await (const [name, handle] of dh) {
+      const path = prefix ? prefix + '/' + name : name;
+      if (handle.kind === 'directory') {
+        await loadImagesFromDirHandle(handle, path);
+      } else if (/\.(jpe?g|png|gif|webp|svg|bmp)$/i.test(name)) {
+        try {
+          const file = await handle.getFile();
+          _imgCache[path] = URL.createObjectURL(file);
+          if (_docRefImgNorms && file.size < 5 * 1024 * 1024) {
+            const isRef = _docRefImgNorms.some(r => path === r || path.endsWith('/' + r));
+            if (isRef) {
+              const buf = await file.arrayBuffer();
+              await _saveImgToDB(path, buf, file.type || 'image/png');
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  if (isRoot) {
+    _docRefImgNorms = null;
     const bar = document.querySelector('.img-auth-bar');
     if (bar) bar.remove();
     resolveImages();

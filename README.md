@@ -13,9 +13,10 @@
 
 - Drag & drop or `Cmd+O` to open `.md` / `.txt` files; `Cmd+S` saves back to the original file (Chrome)
 - Side-by-side preview + source editor with draggable split ratio
-- WYSIWYG editing in preview mode — `Cmd+B` bold, `Cmd+I` italic, and more
+- WYSIWYG editing in preview mode: `Cmd+B` bold, `Cmd+I` italic, and more
 - `Cmd+Z` undo, `Cmd+Shift+Z` redo
 - Light / dark theme, follows system preference
+- Local image rendering with reusable folder authorization and a persistent image cache
 - Auto-continuing lists, Tab indent, scroll sync, word count
 
 ## Keyboard Shortcuts
@@ -44,42 +45,20 @@ Download [`md-reader.html`](md-reader.html) and open in any browser. Works fully
 <details>
 <summary>macOS Desktop App (with "Open With" support)</summary>
 
-Build the app bundle and register it as a handler for `.md` files:
+Requirements: macOS, Python 3, and Google Chrome (recommended; the launcher falls back to the default browser).
+
+Build the app bundle from source:
 
 ```bash
-APP="$HOME/Applications/MD Reader.app"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Scripts"
+./build-macos.sh
+open "dist/MD Reader.app"
+```
 
-# Copy resources
-cp AppIcon.icns "$APP/Contents/Resources/"
-cp Info.plist "$APP/Contents/"
-cp md-reader.html "$APP/Contents/Resources/"
-cp launch.sh "$APP/Contents/Resources/launch-core.sh"
-chmod +x "$APP/Contents/Resources/launch-core.sh"
+The build is for local use and is not Developer ID signed or notarized for distribution through the Mac App Store. To install it for your account and register `.md` files:
 
-# Build AppleScript droplet (handles macOS "Open With" file events)
-cat > /tmp/_mdreader.applescript << 'EOF'
-property coreScript : ""
-on run
-    set coreScript to (POSIX path of (path to me)) & "Contents/Resources/launch-core.sh"
-    do shell script "bash " & quoted form of coreScript
-end run
-on open theFiles
-    set coreScript to (POSIX path of (path to me)) & "Contents/Resources/launch-core.sh"
-    repeat with f in theFiles
-        do shell script "bash " & quoted form of coreScript & " " & quoted form of POSIX path of f
-    end repeat
-end open
-EOF
-osacompile -o /tmp/_mdreader_droplet.app /tmp/_mdreader.applescript
-cp /tmp/_mdreader_droplet.app/Contents/MacOS/droplet "$APP/Contents/MacOS/launch"
-cp /tmp/_mdreader_droplet.app/Contents/Resources/Scripts/main.scpt "$APP/Contents/Resources/Scripts/"
-cp /tmp/_mdreader_droplet.app/Contents/Resources/droplet.rsrc "$APP/Contents/Resources/launch.rsrc"
-rm -rf /tmp/_mdreader_droplet.app /tmp/_mdreader.applescript
-chmod +x "$APP/Contents/MacOS/launch"
-
-# Register with macOS so it appears in "Open With" menus
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"
+```bash
+cp -R "dist/MD Reader.app" "$HOME/Applications/MD Reader.app"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$HOME/Applications/MD Reader.app"
 ```
 
 After building, you can:
@@ -91,4 +70,4 @@ After building, you can:
 
 ## License
 
-[MIT](LICENSE) — eosycx × Claude Code
+[MIT](LICENSE), eosycx × Claude Code

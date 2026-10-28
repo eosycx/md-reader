@@ -20,3 +20,6 @@ code/
 .cowork.json
 .cowork/
 poster.png
+
+# Local macOS build output
+dist/
