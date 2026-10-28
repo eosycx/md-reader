@@ -45,7 +45,7 @@ Download [`md-reader.html`](md-reader.html) and open in any browser. Works fully
 <details>
 <summary>macOS Desktop App (with "Open With" support)</summary>
 
-Requirements: macOS, Python 3, and Google Chrome (recommended; the launcher falls back to the default browser).
+Requirements: macOS and Google Chrome (recommended; the launcher falls back to the default browser). Python is not required.
 
 Build the app bundle from source:
 
@@ -54,7 +54,16 @@ Build the app bundle from source:
 open "dist/MD Reader.app"
 ```
 
-The build is for local use and is not Developer ID signed or notarized for distribution through the Mac App Store. To install it for your account and register `.md` files:
+Build a drag-to-install DMG:
+
+```bash
+./build-dmg.sh
+open "release/MD Reader-1.4.5.dmg"
+```
+
+To install from the DMG, drag **MD Reader** onto the **Applications** shortcut, then open it from Applications. The local build is ad-hoc signed but not Developer ID signed or notarized. If macOS blocks the first launch, Control-click the app, choose **Open**, then confirm **Open**.
+
+To install a source build without the DMG and register `.md` files:
 
 ```bash
 cp -R "dist/MD Reader.app" "$HOME/Applications/MD Reader.app"

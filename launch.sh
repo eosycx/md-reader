@@ -24,36 +24,7 @@ fi
 
 TEMP_HTML="/tmp/mdreader_${$}_$(date +%s).html"
 
-python3 - "$FILEPATH" "$HTML_PATH" "$TEMP_HTML" << 'PYEOF'
-import sys, json, os
-
-fp, hp, tp = sys.argv[1], sys.argv[2], sys.argv[3]
-
-with open(fp, "r", encoding="utf-8") as f:
-    content = f.read()
-filename = os.path.basename(fp)
-
-with open(hp, "r", encoding="utf-8") as f:
-    html = f.read()
-
-inject = "\n// --- Injected: auto-load file ---\n"
-inject += "(function(){\n"
-inject += "  const _d = " + json.dumps({"n": filename, "c": content}) + ";\n"
-inject += "  editor.value = _d.c;\n"
-inject += "  currentFileName = _d.n;\n"
-inject += "  document.title = _d.n + ' \\u2014 MD Reader';\n"
-inject += "  fileHandle = null;\n"
-inject += "  setModified(false);\n"
-inject += "  render();\n"
-inject += "  if (_d.c.includes('![')) tryAutoLoadImages().then(ok => { if (!ok) showImgAuthBar(); });\n"
-inject += "  toast('\\u5df2\\u6253\\u5f00');\n"
-inject += "})();\n"
-
-html = html.replace("</script>\n</body>", inject + "</script>\n</body>")
-
-with open(tp, "w", encoding="utf-8") as f:
-    f.write(html)
-PYEOF
+osascript -l JavaScript "$SCRIPT_DIR/inject-file.js" "$FILEPATH" "$HTML_PATH" "$TEMP_HTML"
 
 if [ $? -ne 0 ]; then
     rm -f "$TEMP_HTML"
